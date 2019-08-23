@@ -2,12 +2,10 @@
 package org.example.cookthis
 
 import android.app.Activity
-import android.content.res.AssetFileDescriptor
 import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
 import org.tensorflow.lite.Interpreter
-
 import java.io.BufferedReader
 import java.io.FileInputStream
 import java.io.IOException
@@ -38,8 +36,6 @@ internal constructor(activity: Activity) {
 
     /** An array to hold inference results, to be feed into Tensorflow Lite as outputs.  */
     private var labelProbArray: Array<FloatArray>? = null
-    /** multi-stage low pass filter  */
-    private var filterLabelProbArray: Array<FloatArray>? = null
 
     init {
         tflite = Interpreter(loadModelFile(activity))
@@ -49,7 +45,6 @@ internal constructor(activity: Activity) {
         )
         imgData!!.order(ByteOrder.nativeOrder())
         labelProbArray = Array(16) { FloatArray(labelList.size) }
-        filterLabelProbArray = Array(FILTER_STAGES) { FloatArray(labelList.size) }
         Log.e(TAG, "Created a Tensorflow Lite Image Classifier, with ${labelList.size} labels")
     }
 
@@ -61,38 +56,14 @@ internal constructor(activity: Activity) {
         }
         convertBitmapToByteBuffer(bitmap)
         val startTime = SystemClock.uptimeMillis()
-        Log.e(TAG, "inputTensor shape : " + Arrays.toString(tflite!!.getInputTensor(0).shape()))
-        Log.e(TAG, "imgData shape : " + imgData!!.position())
+        Log.d(TAG, "inputTensor shape : " + Arrays.toString(tflite!!.getInputTensor(0).shape()))
+        Log.d(TAG, "imgData shape : " + imgData!!.position())
         tflite!!.run(imgData, labelProbArray)
         val endTime = SystemClock.uptimeMillis()
         Log.d(TAG, "Timecost to run model inference: " + java.lang.Long.toString(endTime - startTime))
 
-        // smooth the results
-        applyFilter()
-
         val maxIndex = labelProbArray!![0].withIndex().maxBy { it.value }?.index
         return labelList[maxIndex!!]
-    }
-
-    internal fun applyFilter() {
-        val num_labels = labelList.size
-
-        // Low pass filter `labelProbArray` into the first stage of the filter.
-        for (j in 0 until num_labels) {
-            filterLabelProbArray!![0][j] += FILTER_FACTOR * (labelProbArray!![0][j] - filterLabelProbArray!![0][j])
-        }
-        // Low pass filter each stage into the next.
-        for (i in 1 until FILTER_STAGES) {
-            for (j in 0 until num_labels) {
-                filterLabelProbArray!![i][j] += FILTER_FACTOR * (filterLabelProbArray!![i - 1][j] - filterLabelProbArray!![i][j])
-
-            }
-        }
-
-        // Copy the last stage filter output back to `labelProbArray`.
-        for (j in 0 until num_labels) {
-            labelProbArray!![0][j] = filterLabelProbArray!![FILTER_STAGES - 1][j]
-        }
     }
 
     /** Closes tflite to release resources.  */
@@ -157,9 +128,6 @@ internal constructor(activity: Activity) {
         /** Name of the label file stored in Assets.  */
         private val LABEL_PATH = "labels.txt"
 
-        /** Number of results to show in the UI.  */
-        private val RESULTS_TO_SHOW = 3
-
         /** Dimensions of inputs.  */
         private val DIM_BATCH_SIZE = 1
 
@@ -170,7 +138,5 @@ internal constructor(activity: Activity) {
 
         private val IMAGE_MEAN = 128
         private val IMAGE_STD = 128.0f
-        private val FILTER_STAGES = 3
-        private val FILTER_FACTOR = 0.4f
     }
 }

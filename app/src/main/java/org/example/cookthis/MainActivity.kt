@@ -1,11 +1,9 @@
 package org.example.cookthis
 
 import android.os.Bundle
-import androidx.appcompat.app.AppCompatActivity
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.widget.FrameLayout
+import androidx.appcompat.app.AppCompatActivity
 
 private const val IMMERSIVE_FLAG_TIMEOUT = 500L
 

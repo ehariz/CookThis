@@ -2,65 +2,33 @@
 package org.example.cookthis
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.graphics.*
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
-import android.hardware.Camera
 import android.hardware.display.DisplayManager
-import android.media.Image
-import android.media.MediaScannerConnection
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.HandlerThread
 import android.util.DisplayMetrics
 import android.util.Log
 import android.util.Rational
-import android.view.KeyEvent
-import android.view.LayoutInflater
-import android.view.TextureView
-import android.view.View
-import android.view.ViewGroup
-import android.webkit.MimeTypeMap
-import android.widget.ImageButton
-import androidx.camera.core.CameraX
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageAnalysisConfig
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCapture.CaptureMode
-import androidx.camera.core.ImageCapture.Metadata
-import androidx.camera.core.ImageCaptureConfig
-import androidx.camera.core.ImageProxy
-import androidx.camera.core.Preview
-import androidx.camera.core.PreviewConfig
-import android.view.DisplayCutout
-import android.view.WindowManager
-import android.widget.Toast
+import android.view.*
+import android.widget.*
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AlertDialog
-import androidx.navigation.Navigation
+import androidx.camera.core.*
+import androidx.camera.core.ImageCapture.CaptureMode
+import androidx.camera.core.ImageCapture.Metadata
 import androidx.constraintlayout.widget.ConstraintLayout
-import androidx.core.view.setPadding
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.lifecycleScope
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
-import com.bumptech.glide.Glide
-import com.bumptech.glide.request.RequestOptions
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import java.io.ByteArrayOutputStream
-import java.io.File
+import org.json.JSONArray
 import java.io.IOException
-import java.lang.Exception
-import java.nio.ByteBuffer
-import java.text.SimpleDateFormat
-import java.util.ArrayDeque
-import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 /**
  * Main fragment for this app. Implements :
@@ -71,15 +39,14 @@ class CameraFragment : Fragment() {
 
     private lateinit var container: ConstraintLayout
     private lateinit var viewFinder: TextureView
-    private lateinit var outputDirectory: File
     private lateinit var broadcastManager: LocalBroadcastManager
 
     private var displayId = -1
     private var lensFacing = CameraX.LensFacing.BACK
     private var preview: Preview? = null
     private var imageCapture: ImageCapture? = null
-    private var imageAnalyzer: ImageAnalysis? = null
     private var classifier: ImageClassifier? = null
+    private var recipes: JSONArray? = null
 
     // Volume down button receiver
     private val volumeDownReceiver = object : BroadcastReceiver() {
@@ -112,7 +79,6 @@ class CameraFragment : Fragment() {
                 Log.d(TAG, "Rotation changed: ${view.display.rotation}")
                 preview?.setTargetRotation(view.display.rotation)
                 imageCapture?.setTargetRotation(view.display.rotation)
-                imageAnalyzer?.setTargetRotation(view.display.rotation)
             }
         } ?: Unit
     }
@@ -123,7 +89,8 @@ class CameraFragment : Fragment() {
         } catch (e: IOException) {
             Log.e(TAG, "Failed to initialize an image classifier.")
         }
-
+        recipes = loadRecipes(activity!!)
+        Log.d(TAG,"Found ${recipes!!.length()} recipes")
         super.onCreate(savedInstanceState)
         // Mark this as a retain fragment, so the lifecycle does not get restarted on config change
         retainInstance = true
@@ -190,14 +157,30 @@ class CameraFragment : Fragment() {
                 Toast.makeText(context,"Null activity ", Toast.LENGTH_LONG).show()
                 return
             }
-            var buffer = image.image!!.planes[0].buffer
-            var bytes = ByteArray(buffer.capacity())
+            val buffer = image.image!!.planes[0].buffer
+            val bytes = ByteArray(buffer.capacity())
             buffer.get(bytes)
-            var bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            var scaledBitmap = Bitmap.createScaledBitmap(bitmap,224,224,false)
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            val scaledBitmap = Bitmap.createScaledBitmap(bitmap,224,224,false)
             val label = classifier!!.classifyFrame(scaledBitmap)
-            Toast.makeText(context,"Found $label", Toast.LENGTH_LONG).show()
+            //Toast.makeText(context,"Found $label", Toast.LENGTH_LONG).show()
             image.close()
+            val recipe = getRecipe(label)
+
+            // inflate the layout of the popup window
+            val inflater = LayoutInflater.from(context)
+            val popupView = inflater.inflate (R.layout.recipe_popup, null)
+
+            // create the popup window
+            val width = LinearLayout.LayoutParams.WRAP_CONTENT
+            val height = LinearLayout.LayoutParams.WRAP_CONTENT
+            val focusable = true
+            val popupWindow = PopupWindow (popupView, width, height, focusable)
+            val recipeView = popupView.findViewById<TextView>(R.id.recipe_text)
+            recipeView.text = recipe
+            Log.d(TAG,"RecipeView text : ${recipeView.text}")
+
+            popupWindow.showAtLocation(view, Gravity.CENTER, 0, 0)
         }
     }
 
@@ -257,23 +240,46 @@ class CameraFragment : Fragment() {
                 // Setup image capture listener which is triggered after photo has been taken
                 imageCapture.takePicture(imageCapturedListener)
 
-                // We can only change the foreground Drawable using API level 23+ API
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                // Display flash animation to indicate that photo was captured
+                container.postDelayed({
+                    container.foreground = ColorDrawable(Color.WHITE)
+                    container.postDelayed(
+                            { container.foreground = null }, ANIMATION_FAST_MILLIS)
+                }, ANIMATION_SLOW_MILLIS)
 
-                    // Display flash animation to indicate that photo was captured
-                    container.postDelayed({
-                        container.foreground = ColorDrawable(Color.WHITE)
-                        container.postDelayed(
-                                { container.foreground = null }, ANIMATION_FAST_MILLIS)
-                    }, ANIMATION_SLOW_MILLIS)
+            }
+        }
+
+
+    }
+
+    @Throws(IOException::class)
+    private fun loadRecipes(activity: Activity): JSONArray {
+        val jsonStr = activity.assets.open(RECIPES_PATH).bufferedReader().use { it.readText() }
+        return JSONArray(jsonStr)
+    }
+
+    private fun getRecipe(label: String): String {
+        val recipe = StringBuilder()
+        recipes?.let{
+            for(i in 0 until (recipes!!.length())){
+                val item = recipes?.getJSONObject(i)
+                if (item?.getString("name")?.decapitalize() == label.decapitalize()){
+                    recipe.append("Looks like a $label ! \n")
+                    recipe.append("\nIngredients : \n")
+                    recipe.append(item.getString("ingredients"))
+                    recipe.append("\n \nRecipe : \n ${item.getString("url")}")
+                    return recipe.toString()
                 }
             }
         }
+        return recipe.toString()
     }
-
 
     companion object {
         private const val TAG = "CookThis"
+
+        const val RECIPES_PATH = "recipes.json"
 
         /** Milliseconds used for UI animations */
         const val ANIMATION_FAST_MILLIS = 50L
